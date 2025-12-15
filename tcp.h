@@ -10,7 +10,10 @@
 
 struct tcp_client_msg {
     uint32_t qpn;
-    uint64_t local_ring_rkey;
+    uint32_t local_ring_rkey;
+    uint32_t control_rkey;
+    uint32_t control_qpn;
+    uint32_t control_psn;
 };
 
 enum manager_wr_type {
@@ -42,6 +45,8 @@ void stop_server(pthread_t* thread);
 void register_qp_with_server(uint32_t qpn, int socket);
 void unregister_qp_from_server(uint32_t qpn);
 int connect_to_server(char server_ip[64], struct tcp_client_msg* message);
+
+int send_tcp_client_msg(struct tcp_client_msg msg);
 
 static int send_all(int fd, const void *buf, size_t len) {
     const unsigned char *p = buf;

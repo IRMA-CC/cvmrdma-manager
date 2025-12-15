@@ -6,6 +6,7 @@
 #include <sys/un.h>
 #include <pthread.h>
 #include "tcp.h"
+#include <poll.h>
 
 #define SOCKET_PATH "/tmp/cvmrdma_manager_socket"
 #define MAX_CLIENTS 1024
@@ -17,17 +18,22 @@ pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 // this handles sends between the libibvers library and the cvmrdma_manager over posix sockets.
 // clients can pose different commands to the server.
 void* client_poll_thread(void* arg) {
-    fd_set readfds;
 
+
+    uint64_t spin_count = 0;
     while (1) {
-        FD_ZERO(&readfds);
+        spin_count++;
+
+        // fprintf(stderr, "Manager: Polling %d clients\n", client_count);
+
+        int current_client_count;
         pthread_mutex_lock(&client_mutex);
         int max_fd = -1;
         for (int i = 0; i < client_count; i++) {
-            FD_SET(client_sockets[i], &readfds);
             if (client_sockets[i] > max_fd)
                 max_fd = client_sockets[i];
         }
+        current_client_count = client_count;
         pthread_mutex_unlock(&client_mutex);
 
         if (max_fd < 0) {
@@ -35,57 +41,99 @@ void* client_poll_thread(void* arg) {
             continue;
         }
 
-        // Wait until any client has data
-        int ready = select(max_fd + 1, &readfds, NULL, NULL, NULL);
-        if (ready < 0) { fprintf(stderr, "Manager: select error"); continue; }
+        // fprintf(stderr, "Manager: Waiting for data on clients\n");
 
-        pthread_mutex_lock(&client_mutex);
-        for (int i = 0; i < client_count; i++) {
-            if (FD_ISSET(client_sockets[i], &readfds)) {
-                struct manager_wr wr;
-                int rc = recv_all(client_sockets[i], &wr, sizeof(wr));
+        struct pollfd pfds[MAX_CLIENTS];
 
-                if (rc < 0) {
-                    fprintf(stderr, "Manager: Client fd %d disconnected\n", client_sockets[i]);
-                    close(client_sockets[i]);
-                    for (int j = i; j < client_count - 1; j++) {
-                        client_sockets[j] = client_sockets[j + 1];
-                    }
-                    client_count--;
-                    i--;
-                    continue;
-                }
+        for (int i = 0; i < current_client_count; i++) {
+            pfds[i].fd = client_sockets[i];
+            pfds[i].events = POLLIN;
+            pfds[i].revents = 0;
+        }
 
-                switch (wr.type) {
-                    case MANAGER_WR_REGISTER_QP: {
-                        fprintf(stderr, "Manager: Register QP %u\n", wr.u.qpn.qpn);
-                        register_qp_with_server(wr.u.qpn.qpn, client_sockets[i]);
-                        break;
-                    }
-                    case MANAGER_WR_UNREGISTER_QP: {
-                        fprintf(stderr, "Manager: Unregister QP %u\n", wr.u.qpn.qpn);
-                        unregister_qp_from_server(wr.u.qpn.qpn);
+        // poll with timeout = 0 → non-blocking
+        int ready = poll(pfds, current_client_count, 0);
+        if (ready < 0) {
+            fprintf(stderr, "Manager: poll error\n");
+            continue;
+        }
+
+        // fprintf(stderr, "Manager: poll returned %d ready clients\n", ready);
+
+        int ready_fds[MAX_CLIENTS];
+        int ready_count = 0;
+
+        // Collect FDs that are readable
+        for (int i = 0; i < current_client_count; i++) {
+            if (pfds[i].revents & POLLIN) {
+                ready_fds[ready_count++] = client_sockets[i];
+            }
+        }
+
+        // fprintf(stderr, "Manager: %d clients ready\n", ready_count);
+
+
+        for (int r = 0; r < ready_count; r++) {
+            int cfd = ready_fds[r];
+
+            struct manager_wr wr;
+            //fprintf(stderr, "Manager: Received message from client fd %d\n", cfd);
+            int rc = recv_all(cfd, &wr, sizeof(wr));
+            if (rc < 0) {
+                //fprintf(stderr, "Manager: Client fd %d disconnected\n", cfd);
+                // Remove socket under lock
+                pthread_mutex_lock(&client_mutex);
+                for (int i = 0; i < client_count; i++) {
+                    if (client_sockets[i] == cfd) {
                         close(client_sockets[i]);
-                        // Remove from client_sockets
                         for (int j = i; j < client_count - 1; j++) {
                             client_sockets[j] = client_sockets[j + 1];
                         }
                         client_count--;
-                        i--; // Adjust index after removal
-
                         break;
                     }
-                    case MANAGER_WR_SEND_KEY: {
-                        fprintf(stderr, "Manager: Send key for QP %u to %s\n", wr.u.tcp.msg.qpn, wr.u.tcp.server_ip);
-                        connect_to_server(wr.u.tcp.server_ip, &wr.u.tcp.msg);
-                        break;
-                    }
-                    default:
-                        fprintf(stderr, "Manager: Unknown WR type %d\n", wr.type);
                 }
+                pthread_mutex_unlock(&client_mutex);
+                continue;
+            }
+
+            //fprintf(stderr, "Manager: Received WR type %d from client fd %d\n", wr.type, cfd);
+
+            switch (wr.type) {
+                case MANAGER_WR_REGISTER_QP: {
+                    //fprintf(stderr, "Manager: Register QP %u\n", wr.u.qpn.qpn);
+                    register_qp_with_server(wr.u.qpn.qpn, cfd);
+                    break;
+                }
+                case MANAGER_WR_UNREGISTER_QP: {
+                    // fprintf(stderr, "Manager: Unregister QP %u\n", wr.u.qpn.qpn);
+                    unregister_qp_from_server(wr.u.qpn.qpn);
+
+                    // Remove from client_sockets
+                    pthread_mutex_lock(&client_mutex);
+                    for (int i = 0; i < client_count; i++) {
+                        if (client_sockets[i] == cfd) {
+                            close(client_sockets[i]);
+                            for (int j = i; j < client_count - 1; j++) {
+                                client_sockets[j] = client_sockets[j + 1];
+                            }
+                            client_count--;
+                            break;
+                        }
+                    }
+                    pthread_mutex_unlock(&client_mutex);
+                    break;
+                }
+                case MANAGER_WR_SEND_KEY: {
+                    // fprintf(stderr, "Manager: Send key for QP %u to %s\n", wr.u.tcp.msg.qpn, wr.u.tcp.server_ip);
+                    // No client_mutex held here; this can block safely
+                    connect_to_server(wr.u.tcp.server_ip, &wr.u.tcp.msg);
+                    break;
+                }
+                default:
+                    fprintf(stderr, "Manager: Unknown WR type %d\n", wr.type);
             }
         }
-        pthread_mutex_unlock(&client_mutex);
     }
     return NULL;
 }
@@ -123,7 +171,7 @@ int main () {
         pthread_mutex_lock(&client_mutex);
         if (client_count < MAX_CLIENTS) {
             client_sockets[client_count++] = client_fd;
-            fprintf(stderr, "Manager: Client connected, total: %d\n", client_count);
+            // fprintf(stderr, "Manager: Client connected, total: %d\n", client_count);
         } else {
             close(client_fd);
         }

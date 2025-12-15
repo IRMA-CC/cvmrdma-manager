@@ -62,6 +62,35 @@ int parse_server_address(const char* input, struct sockaddr_in* out) {
     return 0;
 }
 
+int send_tcp_client_msg(struct tcp_client_msg msg) {
+    // it can sometimes happen that we receive a message from a remote, before the local associated
+    // qpn was registered. 
+    // try to poll for it and time out after 100 retries
+    int socket = lookup_qp(msg.qpn);
+    int retrys = 0;
+    while (socket < 0) {
+        usleep(100000); // Sleep for 100ms if no qpn
+        socket = lookup_qp(msg.qpn);
+        retrys++;
+        if (retrys > 100) {
+            fprintf(stderr, "Missing QPN %u, closing connection\n", msg.qpn);
+            return -1;
+        }
+    }
+
+    // fprintf(stderr, "Tcp Server: Sending message for QPN %u to local libibverbs instance\n", msg.qpn);
+
+    // send the message from the remote to the local libibverbs instance of the associated qp
+    int bytes_written = send_all(socket, &msg, sizeof(msg));
+    if (bytes_written < 0) {
+        fprintf(stderr, "Tcp Server: write failed\n");
+    }
+
+    // fprintf(stderr, "Tcp Server: Sent message for QPN %u to local libibverbs instance\n", msg.qpn);
+
+    return 0;
+}
+
 // -------------------------------------------------------
 //          Gracefully stop the server thread
 // -------------------------------------------------------
@@ -100,30 +129,16 @@ void* server_loop(void* arg) {
         struct tcp_client_msg msg;
         recv_all(client_fd, &msg, sizeof(msg));
 
-        fprintf(stderr, "Tcp Server: Received registration for QPN %u with local ring rkey %lu\n", msg.qpn, msg.local_ring_rkey);
+        /*fprintf(stderr, "Tcp Server: Received registration for QPN %u with local ring rkey %u, control rkey %u, control QPN %u, control PSN %u\n",
+            msg.qpn,
+            msg.local_ring_rkey,
+            msg.control_rkey,
+            msg.control_qpn,
+            msg.control_psn
+        );*/
 
-        // it can sometimes happen that we receive a message from a remote, before the local associated
-        // qpn was registered. 
-        // try to poll for it and time out after 100 retries
-        int socket = lookup_qp(msg.qpn);
-        int retrys = 0;
-        while (socket < 0) {
-            usleep(100000); // Sleep for 100ms if no qpn
-            socket = lookup_qp(msg.qpn);
-            retrys++;
-            if (retrys > 100) {
-                fprintf(stderr, "Missing QPN %u, closing connection\n", msg.qpn);
-                goto loop_end;
-            }
-        }
+        send_tcp_client_msg(msg);
 
-        // send the message from the remote to the local libibverbs instance of the associated qp
-        int bytes_written = send_all(socket, &msg, sizeof(msg));
-        if (bytes_written < 0) {
-            fprintf(stderr, "Tcp Server: write failed\n");
-        }
-
-loop_end:
         close(client_fd);
     }
 
@@ -186,7 +201,7 @@ void register_qp_with_server(uint32_t qpn, int socket) {
     num_qps++;
     pthread_mutex_unlock(&qp_table_mutex);
 
-    fprintf(stderr, "Tcp Server: Registered QPN %u\n", qpn);
+    // fprintf(stderr, "Tcp Server: Registered QPN %u\n", qpn);
 }
 
 void unregister_qp_from_server(uint32_t qpn) {
@@ -204,6 +219,6 @@ void unregister_qp_from_server(uint32_t qpn) {
     }
     pthread_mutex_unlock(&qp_table_mutex);
 
-    fprintf(stderr, "Tcp Server: No registered QP with QPN %u to unregister\n", qpn);
+    // fprintf(stderr, "Tcp Server: No registered QP with QPN %u to unregister\n", qpn);
 }
 

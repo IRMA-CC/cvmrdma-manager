@@ -41,12 +41,14 @@ int connect_to_server(char server_ip[64], struct tcp_client_msg* message) {
     }
 
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        fprintf(stderr, "Tcp Client: Failed to connect to %s\n", server_ip);
+        // fprintf(stderr, "Tcp Client: Failed to connect to %s\n", server_ip);
         exit(1);
     }
 
-    fprintf(stderr, "Tcp Client: Sending message to %s\n", server_ip);
+    // fprintf(stderr, "Tcp Client: Sending message to %s\n", server_ip);
     send_all(sock, message, sizeof(*message));
+
+// finish:
 
     close(sock);
     return 0;
