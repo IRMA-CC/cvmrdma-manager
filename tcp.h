@@ -8,12 +8,16 @@
 #include <arpa/inet.h>
 #include <stdatomic.h>
 
+#include <stdarg.h>
+#include <time.h>
+
 struct tcp_client_msg {
     uint32_t qpn;
     uint32_t local_ring_rkey;
     uint32_t control_rkey;
     uint32_t control_qpn;
     uint32_t control_psn;
+    uint32_t send_qp;
 };
 
 enum manager_wr_type {
@@ -70,4 +74,47 @@ static int recv_all(int fd, void *buf, size_t len) {
         len -= (size_t)n;
     }
     return 0;
+}
+
+#define PRINT_WITH_TIMESTAMP
+
+static inline int fprintf_time_stderr(FILE *stream, const char *fmt, ...)
+{
+
+#ifdef PRINT_WITH_TIMESTAMP
+    struct timespec ts;
+    struct tm tm;
+    char timebuf[32];
+
+    clock_gettime(CLOCK_REALTIME, &ts);
+    localtime_r(&ts.tv_sec, &tm);
+
+    // Format: HH:MM:SS.mmm
+    snprintf(timebuf, sizeof(timebuf),
+         "%02d:%02d:%02d.%09ld ",
+         tm.tm_hour,
+         tm.tm_min,
+         tm.tm_sec,
+         ts.tv_nsec);
+
+    if (fputs(timebuf, stream) == EOF) {
+        return EOF;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    int ret = vfprintf(stream, fmt, args);
+    va_end(args);
+    if (ret < 0) {
+        return ret;
+    }
+    // Best-effort char count: timestamp length + formatted length
+    return (int)strlen(timebuf) + ret;
+#else
+    va_list args;
+    va_start(args, fmt);
+    int ret = vfprintf(stream, fmt, args);
+    va_end(args);
+    return ret;
+#endif
 }
