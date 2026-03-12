@@ -125,7 +125,7 @@ void* client_poll_thread(void* arg) {
                     break;
                 }
                 case MANAGER_WR_SEND_KEY: {
-                    // fprintf(stderr, "Manager: Send key for QP %u to %s\n", wr.u.tcp.msg.qpn, wr.u.tcp.server_ip);
+                    fprintf(stderr, "Manager: Send key from QPN %u request for Remote QP %u on %s\n", wr.u.tcp.msg.send_qp, wr.u.tcp.msg.qpn, wr.u.tcp.server_ip);
                     // No client_mutex held here; this can block safely
                     connect_to_server(wr.u.tcp.server_ip, &wr.u.tcp.msg);
                     break;

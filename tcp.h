@@ -14,12 +14,13 @@ struct tcp_client_msg {
     uint32_t control_rkey;
     uint32_t control_qpn;
     uint32_t control_psn;
+    uint32_t send_qp;
 };
 
 enum manager_wr_type {
-    MANAGER_WR_REGISTER_QP,
-    MANAGER_WR_UNREGISTER_QP,
-    MANAGER_WR_SEND_KEY
+    MANAGER_WR_REGISTER_QP = 0,
+    MANAGER_WR_UNREGISTER_QP = 1,
+    MANAGER_WR_SEND_KEY = 2
 };
 
 struct manager_wr_qpn {

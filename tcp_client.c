@@ -12,7 +12,7 @@ int parse_client_address(const char* input, struct sockaddr_in* out) {
     if (ip_len >= sizeof(ip)) return -1;
 
     memcpy(ip, input, ip_len);
-    ip[ip_len] = '\0';
+    ip[ip_len] = '\0'; 
 
     strcpy(port_str, colon + 1);
 
@@ -46,7 +46,14 @@ int connect_to_server(char server_ip[64], struct tcp_client_msg* message) {
     }
 
     // fprintf(stderr, "Tcp Client: Sending message to %s\n", server_ip);
-    send_all(sock, message, sizeof(*message));
+    int bytes_written = send_all(sock, message, sizeof(*message));
+    if (bytes_written < 0) {
+        fprintf(stderr, "Tcp Server: write failed\n");
+    }
+
+    // Shutdown write end to signal we're done sending, but allow receiver to finish reading
+    shutdown(sock, SHUT_WR);
+
 
 // finish:
 

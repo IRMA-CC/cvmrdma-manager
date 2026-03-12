@@ -86,6 +86,8 @@ int send_tcp_client_msg(struct tcp_client_msg msg) {
         fprintf(stderr, "Tcp Server: write failed\n");
     }
 
+    shutdown(socket, SHUT_WR);
+
     // fprintf(stderr, "Tcp Server: Sent message for QPN %u to local libibverbs instance\n", msg.qpn);
 
     return 0;
